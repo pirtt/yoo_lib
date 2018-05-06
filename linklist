@@ -1,0 +1,948 @@
+/*********************************************
+ * desc:
+ *      这是一个可以用来排序的链表，内部
+ * 对内存进行管理,直到对象被析构时自动删除
+ * 申请的内存。
+ * notice：
+ *      节点元素类型需要支持<;<<;=这三个操作符。
+ * @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+ * clear只会清空工作链不会释放内存
+ * removeAll既会清空也会释放内存。
+ * find%只能对有序的使用(insert的)
+ * insert的是有序的，检查唯一性
+ * @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+ * Author：
+ *      Yoohoo Niu
+ * *******************************************/
+#ifndef SORT_LINKLIST_H
+#define SORT_LINKLIST_H
+
+#include <assert.h>
+#include <new>
+#include <iostream>
+#include <algorithm>
+#include <vector>
+
+#ifdef Begin_NameSpace
+#undef Begin_NameSpace
+#endif
+#define Begin_NameSpace(spaceName) namespace spaceName {
+
+#ifdef End_NameSpace
+#undef End_NameSpace
+#endif
+#define End_NameSpace(spaceName) }
+
+/************************Code Begin****************************/
+
+Begin_NameSpace(yoo_lib)
+
+//分配内存时如果分配失败尝试次数
+const unsigned short alloc_mem_try_times =5;
+
+//链表中节点实际的数据结构
+template<typename T>
+struct NodeObject {
+    T obj;            //用来保存对象
+    NodeObject* prev; // 指向前一个节点的指针
+    NodeObject* next; // 指向后一个节点的指针
+
+    NodeObject():prev(NULL), next(NULL){}
+
+    NodeObject(const T& o):prev(NULL), next(NULL)
+    { memcpy(&obj, &o, sizeof(T));}
+
+    NodeObject(const NodeObject<T>& t)
+    {
+        memcpy(&obj, &(t.obj), sizeof(T));
+        prev = t.prev;
+        next = t.next;
+    }
+
+    NodeObject& operator = (const T& o)
+    {
+        memcpy(&obj, &o, sizeof(T));
+        return *this;
+    }
+    NodeObject& operator = (const NodeObject<T>& t)
+    {
+        memcpy(&obj, &(t.obj), sizeof(T));
+        prev = t.prev;
+        next = t.next;
+        return *this;
+    }
+
+    operator bool() const{return (NULL != prev || NULL != next);}
+};
+
+//
+template<typename F, typename S>
+struct PairType {
+    F   first;
+    S   second;
+
+    PairType() : first(), second() { }
+    PairType(const PairType& r) {*this = r;}
+    PairType(F f, S s) : first(f), second(s) {}
+    PairType& operator = (const PairType& r)
+    {
+        first = r.first;
+        second = r.second;
+        return *this;
+    }
+};
+
+//链表的模板类
+template<typename T>
+class LinkList
+{
+public:
+    typedef NodeObject<T>* NodePtr;
+    enum Find_state
+    {
+        LinkList_Equal=0x00,
+        LinkList_isNull=0x01,
+        LinkList_lessThan=0x02,
+        LinkList_greaterThan=0x04
+    };
+    typedef PairType<T*, bool> Insert_type;
+    typedef PairType<NodeObject<T>*, Find_state> Find_type;
+public:
+    LinkList():
+        _pWorkChainHead(NULL), _pWorkChainTail(NULL),
+        _pRecuChainTail(NULL),_pNextChainHead(NULL),
+        _pNextCurObj(NULL), _workNum(0)
+    {
+
+    }
+
+    ~LinkList(){removeAll();}
+    LinkList(const LinkList<T>& r):
+        _pWorkChainHead(NULL), _pWorkChainTail(NULL),
+        _pRecuChainTail(NULL),_pNextChainHead(NULL),
+        _pNextCurObj(NULL), _workNum(0)
+    {
+        *this = r;
+    }
+
+    LinkList<T>& operator= (const LinkList<T>& r)
+    {
+        if(&r == this)
+        {
+            return *this;
+        }
+
+        this->clear();
+        LinkList<T>& iterS = const_cast<LinkList<T>&>(r);
+        iterS.rewind();
+        while(iterS.next())
+        {
+            this->push_back(iterS.get());
+        }
+        iterS.rewind();
+
+        return *this;
+    }
+
+    //非排序方式插入链头,不判断唯一性,返回链头
+    NodeObject<T>* push_front(const T& obj)
+    {
+        NodePtr ptmp = alloc();
+        ptmp->obj = obj;
+        ++_workNum;
+
+        if(NULL == _pWorkChainHead)//第一次插入时
+        {
+            _pWorkChainHead = ptmp;
+            _pWorkChainTail = ptmp;
+            return ptmp;
+        }
+
+        ptmp->next = _pWorkChainHead;
+        _pWorkChainHead->prev=ptmp;
+        _pWorkChainHead = ptmp;
+
+        return _pWorkChainHead;
+    }
+
+    //非排序方式插入链尾,不判断唯一性,返回链尾
+    NodeObject<T>* push_back(const T& obj)
+    {
+        NodePtr ptmp = alloc();
+        ptmp->obj = obj;
+        ++_workNum;
+
+        if(NULL == _pWorkChainTail)
+        {
+            _pWorkChainHead = ptmp;
+            _pWorkChainTail = ptmp;
+            return ptmp;
+        }
+
+        _pWorkChainTail->next = ptmp;
+        ptmp->prev = _pWorkChainTail;
+        _pWorkChainTail = ptmp;
+
+        return _pWorkChainTail;
+    }
+
+    //弹出
+    bool pop_front(T& pObj)
+    {
+        if(NULL == _pWorkChainHead)
+        {
+            return false;
+        }
+        //T需要operator =
+        pObj = _pWorkChainHead->obj;
+
+        //删除头
+        NodePtr ptmp = _pWorkChainHead;
+        _pWorkChainHead = ptmp->next;
+
+        if(NULL != _pWorkChainHead)
+        {
+            _pWorkChainHead->prev = NULL;
+        }
+        else
+        {
+            //此时整个链表都为空了
+            _pWorkChainTail = NULL;
+        }
+        recu(ptmp);
+        --_workNum;
+        return true;
+    }
+    bool pop_back(T& pObj)
+    {
+        if(NULL == _pWorkChainTail)
+        {
+            return false;
+        }
+        NodePtr pTmp = _pWorkChainTail;
+        pObj = pTmp->obj;
+
+        // 删节尾
+        _pWorkChainTail = pTmp->prev;
+
+        if (_pWorkChainTail != NULL)
+        {
+            _pWorkChainTail->next = NULL;
+        }
+        else
+        {
+            //此时整个链表都为空了
+            _pWorkChainHead = NULL;
+        }
+
+        recu(pTmp);
+        --_workNum;
+
+        return true;
+    }
+
+    //删除
+    int remove(const T& obj)
+    {
+        // 查找
+        Find_type ft = findObj(obj);
+
+        // 没有找到
+        if (NULL == ft.first || ft.second != LinkList_Equal)
+        {
+            return 0;
+        }
+        // 删节点
+        remove(ft.first);
+
+        return 1;
+    }
+    void remove(NodeObject<T>* pT)
+    {
+        if (NULL == pT)
+        {
+            return;
+        }
+        // 拆链
+        NodeObject<T>* pPrev = pT->prev;
+        NodeObject<T>* pNext = pT->next;
+
+        if (pPrev != NULL)
+        {
+            pPrev->next = pNext;
+        }
+        else
+        { // 删除的是第一个节点，重置链首指针
+            _pWorkChainHead = pNext;
+
+            if (NULL != _pWorkChainHead)
+            {
+                _pWorkChainHead->prev = NULL;
+            }
+        }
+
+        if (NULL != pNext)
+        {
+            pNext->prev = pPrev;
+
+        }
+        else
+        { // 删除的是最后一个节点，尾链指向前一个
+            _pWorkChainTail = pPrev;
+
+            if (NULL != _pWorkChainTail)
+            {
+                _pWorkChainTail->next = NULL;
+            }
+        }
+
+        // 回收
+        recu(pT);
+        --_workNum;
+    }
+    void removeAll()
+    {
+        //放入回收链
+        clear();
+
+        NodePtr pTmp = NULL;
+
+        while (NULL != _pRecuChainTail)
+        {
+            pTmp = _pRecuChainTail;
+            _pRecuChainTail = pTmp->prev;
+            delete pTmp;
+            pTmp = NULL;
+        }
+    }
+
+    //正向迭代器,配合get()遍历时使用
+    bool next()
+    {
+        if (NULL != _pNextChainHead)
+        {
+            _pNextCurObj = _pNextChainHead;
+            _pNextChainHead = _pNextChainHead->next;
+            return true;
+        }
+        _pNextCurObj = NULL;
+        return false;
+    }
+
+    //反向迭代器
+    bool reverseNext()
+    {
+        if(NULL != _pNextChainHead)
+        {
+            _pNextCurObj = _pNextChainHead;
+            _pNextChainHead = _pNextChainHead->prev;
+            return true;
+        }
+        _pNextCurObj = NULL;
+        return false;
+    }
+
+    //获取一个当前元素配合迭代器使用
+    const T& get() const
+    {
+        assert(_pNextCurObj);
+        return _pNextCurObj->obj;
+    }
+
+    //将工作链上的节点放到回收链
+    void clear()
+    {
+        _workNum = 0;
+
+        if(NULL == _pWorkChainHead)
+        {
+            return ;
+        }
+
+        NodePtr pTail = _pWorkChainTail;
+        //如果回收链为空则直接将工作链移到回收链,如果不为空则接到原来的回收链后面
+        if (NULL != _pRecuChainTail)
+        {
+            _pRecuChainTail->next = _pWorkChainHead;
+            _pWorkChainHead->prev = _pRecuChainTail;
+        }
+        //清空工作链放入回收链
+        _pWorkChainHead = NULL;
+        _pWorkChainTail = NULL;
+        _pRecuChainTail = pTail;
+    }
+
+    //打印内容需要T支持<<
+    void show(int maxNum = 1024)
+    {
+        int curPos = 0;
+        NodePtr pTmp = _pWorkChainHead;
+        while (pTmp != NULL && curPos < maxNum)
+        {
+            std::cout << curPos++ << " : " << pTmp->obj << std::endl;
+            pTmp = pTmp->next;
+        }
+    }
+
+    //通过下标访问
+    T* operator[](size_t i)
+    {
+        if (i >= _workNum)
+        {
+            return NULL;
+        }
+
+        NodePtr pTmp = _pWorkChainHead;
+        assert(pTmp);
+
+        for (int j = 0; j < i; ++j)
+        {
+            pTmp = pTmp->next;
+        }
+
+        return &(pTmp->obj);
+    }
+    NodeObject<T>* at(size_t i)
+    {
+        if (i >= _workNum)
+        {
+            return NULL;
+        }
+
+       NodePtr pTmp = _pWorkChainHead;
+
+        for (int j = 0; j < i; ++j)
+        {
+            pTmp = pTmp->next;
+        }
+
+        return pTmp;
+    }
+
+    //二分查找方法查找对象
+    Find_type findObj(const T& obj)
+    {
+        if(NULL == _pWorkChainHead)
+        {
+            return Find_type(NULL,LinkList_isNull);
+        }
+        int nMid;
+        int nHead = 1;
+        int nTail = _workNum;
+        NodeObject<T>* pHead = _pWorkChainHead;
+        NodeObject<T>* pMid = NULL;
+
+        Find_state nType = LinkList_isNull;
+
+        while (nHead <= nTail)
+        {
+            pMid = pHead;
+            nMid = (nHead + nTail) / 2;
+
+            for (int i = nHead; (pMid != NULL) && (i < nMid); ++i)
+            {
+                pMid = pMid->next;
+            }
+
+            if (NULL == pMid)
+            {
+                break;
+            }
+
+            // 比较
+            if (obj < pMid->obj)
+            {
+                nTail = nMid - 1;
+                nType = LinkList_lessThan;
+
+            }
+            else if (pMid->obj < obj)
+            {
+                pHead = pMid->next;
+                nHead = nMid + 1;
+                nType = LinkList_greaterThan;
+
+            }
+            else
+            {
+                nType = LinkList_Equal;
+                break;
+            }
+        }
+
+        return Find_type(pMid, nType);
+    }
+    T* find(const T& obj)
+    {
+        Find_type ft = findObj(obj);
+
+        if (LinkList_Equal == ft.second)
+        {
+            return &(ft.first->obj);
+        }
+
+        return NULL;
+    }
+
+    //排序插入
+    Insert_type insert(const T& obj)
+    {
+        //如果链表为空，新建节点并返回节点和插入成功
+        if(NULL == _pWorkChainHead)
+        {
+            _pWorkChainHead = alloc();
+            _pWorkChainTail = _pWorkChainHead;
+            _pWorkChainHead->obj = obj;
+            ++_workNum;
+            return Insert_type(&(_pWorkChainHead->obj), true);
+        }
+        // 查找
+        Find_type ft = findObj(obj);
+
+        if (NULL == ft.first)
+        {
+            // throw
+        }
+
+        if (LinkList_Equal == ft.second)
+        {
+            return Insert_type(&(ft.first->obj), false);
+        }
+
+        // 分配空间存储
+        ++_workNum;
+        NodeObject<T>* pTmp = alloc();
+        pTmp->obj = obj;
+
+        // 组织链
+        NodeObject<T>* pPrev = ft.first->prev;
+        NodeObject<T>* pNext = ft.first->next;
+
+        if (ft.second == LinkList_lessThan )
+        {
+            ft.first->prev = pTmp;
+            pTmp->prev = pPrev;
+            pTmp->next = ft.first;
+
+            if (pPrev != NULL)
+            {
+                pPrev->next = pTmp;
+
+            }
+            else
+            {
+                _pWorkChainHead = pTmp; // 为空将成为首指针
+            }
+
+        }
+        else if (ft.second == LinkList_greaterThan)
+        {     // 大于，放在后面
+            ft.first->next = pTmp;
+            pTmp->prev = ft.first;
+            pTmp->next = pNext;
+
+            if (pNext != NULL)
+            {
+                pNext->prev = pTmp;
+
+            }
+            else
+            {
+                _pWorkChainTail = pTmp; // 为空是最后一个位置
+            }
+        }
+
+        return Insert_type(&(pTmp->obj), true);
+    }
+
+    //正向复位,正向遍历时首先调用
+    inline void rewind(){_pNextChainHead = _pWorkChainHead;}
+    //逆向复位,逆向遍历时应该首先调用
+    inline void reverseRewind(){_pNextChainHead = _pWorkChainTail;}
+    //指向链表头
+    inline NodeObject<T>* first(){return _pWorkChainHead;}
+    //指向链表尾
+    inline NodeObject<T>* last(){return _pWorkChainTail;}
+    inline bool empty(){return (NULL == _pWorkChainHead);}
+    inline int getSize() const{return _workNum;}
+    inline void resetHead(NodeObject<T>* pHead){_pWorkChainHead = pHead;}
+    inline void resetTail(NodeObject<T>* pTail){_pWorkChainTail = pTail;}
+
+private:
+    //分配一个内存存储对象
+    NodeObject<T>* alloc()
+    {
+        //检查回收链中是否有需要回收的节点,如果有直接拿来用，没有的话再分配
+        NodePtr ptmp = _pRecuChainTail;
+        if(ptmp)
+        {
+            _pRecuChainTail = ptmp->prev;
+            if(_pRecuChainTail)
+            {
+                _pRecuChainTail->next = NULL;
+            }
+            ptmp->next = NULL;
+            ptmp->prev = NULL;
+            return ptmp;
+        }
+        unsigned int alloc_times = alloc_mem_try_times;
+        do
+        {
+            try
+            {
+                ptmp = new NodeObject<T>();
+            }
+            catch (std::bad_alloc& e)
+            {
+                if(--alloc_times < 0)
+                {
+                    throw e;
+                }
+            }
+        }while(!ptmp);
+
+        return ptmp;
+    }
+    //回收一个对象
+    void recu(NodeObject<T>* pTr)
+    {
+        if(NULL == pTr)
+        {
+            return;
+        }
+        pTr->prev = NULL;
+        pTr->next = NULL;
+        //将待回收节点插入到回收链中
+        if (NULL == _pRecuChainTail)
+        {
+            _pRecuChainTail = pTr;
+        }
+        else
+        {
+            _pRecuChainTail->next = pTr;
+            pTr->prev = _pRecuChainTail;
+            _pRecuChainTail = pTr;
+        }
+    }
+
+private:
+    NodeObject<T>* _pWorkChainHead; // 工作链头
+    NodeObject<T>* _pWorkChainTail; // 工作链尾
+    NodeObject<T>* _pRecuChainTail; // 回收链尾
+    NodeObject<T>* _pNextChainHead; //next()访问时指向下一个节点
+    NodeObject<T>* _pNextCurObj;    //next()访问时指向当前节点
+    unsigned int   _workNum;        // 工作链的节点个数
+};
+
+
+
+template <typename T>
+inline void clear(LinkList<T>& s)
+{
+    s.rewind();
+
+    while (s.next())
+    {
+        T& t = const_cast<T&>(s.get());
+        t.reset();
+    }
+
+    s.clear();
+}
+
+// 通过Vector排序，使用指针排序，减少对象拷贝时间
+template <typename T>
+inline void sortLinkList(LinkList<T>& s, bool(*f)(const NodeObject<T>* l, const NodeObject<T>* r) = NULL)
+{
+    if (s.getSize() <= 1)
+    {
+        return;
+    }
+
+    std::vector<NodeObject<T>* > vec;
+    vec.reserve(s.getSize());    // 一次性分配好期望的空间
+
+    NodeObject<T>* curPtr;
+    curPtr = s.first();
+
+    while (curPtr) {
+        vec.push_back(curPtr);
+        curPtr = curPtr->next;
+    }
+
+    // 默认排序函数,调用T的operator<
+    struct myObjSort
+    {
+        static inline bool cmpNodePrt(const NodeObject<T>* l, const NodeObject<T>* r) {
+            return l->obj < r->obj;
+        }
+    };
+
+    if (NULL != f)
+    {
+        std::sort(vec.begin(), vec.end(), f);
+    }
+    else
+    {
+        std::sort(vec.begin(), vec.end(), myObjSort::cmpNodePrt);
+    }
+
+    // 把排好的指针重新组织起来
+    NodeObject<T>* pHead = vec[0];
+    NodeObject<T>* pTail = vec[vec.size() - 1];
+
+    pHead->prev = NULL;
+    pHead->next = NULL;
+    pTail->prev = NULL;
+    pTail->next = NULL;
+
+    curPtr = pHead;
+
+    for (int i = 1; i < vec.size(); ++i) {
+        curPtr->next = vec[i];
+        vec[i]->prev = curPtr;
+        curPtr = vec[i];
+    }
+
+    // 重置链头和链尾
+    s.resetHead(pHead);
+    s.resetTail(pTail);
+
+    vec.clear();
+}
+
+
+// 快速排序
+typedef bool(*LinkListFunc)(void* l, void* r);
+
+template <typename T>
+inline void qSortLinkList(LinkList<T>& s, NodeObject<T>* firstPtr, NodeObject<T>* lastPtr, LinkListFunc f)
+{
+    // 指针为空了，或者是同一个指针，则不需要排序
+    if (NULL == firstPtr || NULL == lastPtr || firstPtr == lastPtr)
+    {
+        return;
+    }
+
+    // 保存变量
+    NodeObject<T>* pLeftEnd = firstPtr->prev; // 当前排序段的前一个指针
+    NodeObject<T>* pRightFirst = lastPtr->next;  // 当前排序段的后一个指针
+
+                                                 // 排序后的3个关键节点
+    NodeObject<T>* pLeftHead = NULL; // 排序后左侧的头
+    NodeObject<T>* pRightTail = NULL; // 排序后右侧的尾
+    NodeObject<T>* pBaseMid = NULL; // 基础指针，左侧的比他小，右侧的比他大
+
+                                    // 1. 排序
+    NodeObject<T>* pCurCmpPtr = firstPtr->next; // 从链表中获取比较的指针，从下一个开始
+    NodeObject<T>* pRefPtr = NULL;           // 参考指针，就是基础指针的左边第一个，或者右边第一个
+    NodeObject<T>* pNextPtr = NULL;
+
+    // 2. 遍历比较
+    pBaseMid = firstPtr;
+    pBaseMid->prev = NULL;
+    pBaseMid->next = NULL;
+
+    while (pCurCmpPtr)
+    {
+        // 保存下一个指针
+        pNextPtr = pCurCmpPtr->next;
+
+        // 小于放左侧
+        if (f(&(pCurCmpPtr->obj), &(pBaseMid->obj)))
+        {
+            if (NULL == pLeftHead)
+            {
+                pLeftHead = pCurCmpPtr;
+            }
+
+            // 挂链
+            pRefPtr = pBaseMid->prev;
+
+            if (NULL != pRefPtr)
+            {
+                pRefPtr->next = pCurCmpPtr;
+            }
+
+            pCurCmpPtr->prev = pRefPtr;
+            pCurCmpPtr->next = pBaseMid;
+            pBaseMid->prev = pCurCmpPtr;
+
+        }
+        else
+        { //大于放右侧
+            if (NULL == pRightTail)
+            {
+                pRightTail = pCurCmpPtr;
+            }
+
+            // 挂链
+            pRefPtr = pBaseMid->next;
+
+            if (NULL != pRefPtr)
+            {
+                pRefPtr->prev = pCurCmpPtr;
+            }
+
+            pCurCmpPtr->prev = pBaseMid;
+            pCurCmpPtr->next = pRefPtr;
+            pBaseMid->next = pCurCmpPtr;
+        }
+
+        // 已经是最后一个指针
+        if (pCurCmpPtr == lastPtr)
+        {
+            break;
+        }
+
+        // 比较下一个
+        pCurCmpPtr = pNextPtr;
+    }
+
+    // 3. 判断基础链左右侧是否有链
+    bool bNoLeftOut = false; // 无左侧链
+    bool bNoRightOut = false; // 无右侧链
+
+    if (NULL == pLeftHead)
+    {
+        bNoLeftOut = true;
+        pLeftHead = pBaseMid;
+    }
+
+    if (NULL == pRightTail)
+    {
+        bNoRightOut = true;
+        pRightTail = pBaseMid;
+    }
+
+    // 4. 和外围的大链关联起来
+    pLeftHead->prev = pLeftEnd;
+
+    if (NULL != pLeftEnd)
+    {
+        pLeftEnd->next = pLeftHead;
+    }
+
+    pRightTail->next = pRightFirst;
+
+    if (NULL != pRightFirst)
+    {
+        pRightFirst->prev = pRightTail;
+    }
+
+    // 5. 重新定位链首和链尾
+    if (NULL == pLeftHead->prev)
+    {
+        s.resetHead(pLeftHead);
+    }
+
+    if (NULL == pRightTail->next)
+    {
+        s.resetTail(pRightTail);
+    }
+
+    // 6. 递归排序
+    if (!bNoLeftOut && pLeftHead != pBaseMid->prev)
+    {
+        qSortLinkList(s, pLeftHead, pBaseMid->prev, f);
+    }
+
+    if (!bNoRightOut && pBaseMid->next != pRightTail)
+    {
+        qSortLinkList(s, pBaseMid->next, pRightTail, f);
+    }
+}
+
+//冒泡排序
+template <typename T>
+inline void bubbleSortLinkList(LinkList<T>& s, NodeObject<T>* firstPtr, NodeObject<T>* lastPtr, LinkListFunc f)
+{
+    NodeObject<T>* curPtr = NULL;
+    NodeObject<T>* firstPrev = NULL;
+    NodeObject<T>* firstNext = NULL;
+    NodeObject<T>* curPrev = NULL;
+    NodeObject<T>* curNext = NULL;
+    NodeObject<T>* tmpPtr = NULL;
+    NodeObject<T>* splitPtr = lastPtr ? lastPtr->next : NULL;
+
+    // 循环比较
+    for (; firstPtr && firstPtr != splitPtr; firstPtr = firstPtr->next)
+    {
+        curPtr = firstPtr->next;
+
+        if (curPtr == splitPtr)
+        {
+            break;
+        }
+
+        while (curPtr) {
+            if (f(&(curPtr->obj), &(firstPtr->obj)))
+            {
+                firstPrev = firstPtr->prev;
+                firstNext = firstPtr->next;
+                curPrev = curPtr->prev;
+                curNext = curPtr->next;
+
+                // 基点的前一个节点
+                if (firstPrev)
+                {
+                    firstPrev->next = curPtr;
+                }
+
+                curPtr->prev = firstPrev;
+
+                // 基点的下一个节点
+                if (firstNext != curPtr)
+                {
+                    firstNext->prev = curPtr;
+                }
+
+                curPtr->next = (firstNext != curPtr) ? firstNext : firstPtr;
+
+                // 比较点的前一个节点
+                if (curPrev != firstPtr)
+                {
+                    curPrev->next = firstPtr;
+                }
+
+                firstPtr->prev = (curPrev != firstPtr) ? curPrev : curPtr;
+
+                // 比较点的后一个节点
+                if (curNext)
+                {
+                    curNext->prev = firstPtr;
+                }
+
+                firstPtr->next = curNext;
+
+                // 链头需要变更
+                if (NULL == firstPrev)
+                {
+                    s.resetHead(curPtr);
+                }
+
+                // 链尾需要变更
+                if (NULL == curNext)
+                {
+                    s.resetTail(firstPtr);
+                }
+
+                // 调整链比较位置
+                tmpPtr = firstPtr;
+                firstPtr = curPtr;
+                curPtr = tmpPtr;
+            }
+
+            //
+            curPtr = curPtr->next;
+
+            if (curPtr == splitPtr)
+            {
+                break;
+            }
+        }
+    }
+}
+
+End_NameSpace(yoo_lib)
+#endif
