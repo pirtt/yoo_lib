@@ -22,16 +22,7 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
-
-#ifdef Begin_NameSpace
-#undef Begin_NameSpace
-#endif
-#define Begin_NameSpace(spaceName) namespace spaceName {
-
-#ifdef End_NameSpace
-#undef End_NameSpace
-#endif
-#define End_NameSpace(spaceName) }
+#include "yoo_lib.h"
 
 /************************Code Begin****************************/
 

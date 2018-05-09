@@ -1,5 +1,7 @@
 #ifndef SINGLETON_H
 #define SINGLETON_H
+#include "yoo_lib.h"
+Begin_NameSpace(yoo_lib)
 
 template<typename T>
 class ObjMgr
@@ -53,4 +55,5 @@ private:
     }
 };
 
+End_NameSpace(yoo_lib)
 #endif // SINGLETON_H
