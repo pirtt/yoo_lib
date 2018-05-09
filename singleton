@@ -1,0 +1,56 @@
+#ifndef SINGLETON_H
+#define SINGLETON_H
+
+template<typename T>
+class ObjMgr
+{
+public:
+    ObjMgr():__instance(NULL)
+    {
+
+    }
+    ~ObjMgr()
+    {
+        delete __instance;__instance=NULL;
+    }
+
+    T& getInstance()
+    {
+        if(NULL == __instance)
+        {
+            __instance = new T();
+            __instance->initSingleton();
+        }
+        return *__instance;
+    }
+private:
+    T* __instance;
+};
+
+template<typename T>
+class Singleton
+{
+public:
+    Singleton(){}
+    ~Singleton()
+    {
+    }
+    typedef ObjMgr<T> ObjType;
+    static T& getInstance()
+    {
+        return createObj().getInstance();
+    }
+protected:
+    friend class ObjMgr<T>;
+    virtual void initSingleton(){}
+private:
+     Singleton(const Singleton<T>& s)=delete;
+     Singleton<T>& operator=(const Singleton<T>& s)=delete;
+    static ObjType& createObj()
+    {
+        static ObjType obj;
+        return obj;
+    }
+};
+
+#endif // SINGLETON_H
